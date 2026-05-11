@@ -1,0 +1,56 @@
+{
+  "nombre": "Nueva plantilla",
+  "formato": "tira_5x15",
+  "ancho": 591,
+  "alto": 1772,
+  "n_fotos": 3,
+  "cols": 1,
+  "fondo_color": "#ffffff",
+  "fondo_imagen": null,
+  "layout": "con_texto",
+  "padding": 24,
+  "gap": 14,
+  "slots": [
+    {
+      "type": "foto",
+      "orden": 1,
+      "x": 24,
+      "y": 24,
+      "w": 543,
+      "h": 420
+    },
+    {
+      "type": "foto",
+      "orden": 2,
+      "x": 24,
+      "y": 458,
+      "w": 543,
+      "h": 420
+    },
+    {
+      "type": "foto",
+      "orden": 3,
+      "x": 24,
+      "y": 892,
+      "w": 543,
+      "h": 420
+    },
+    {
+      "type": "texto",
+      "orden": 4,
+      "x": 24,
+      "y": 1326,
+      "w": 543,
+      "h": 420,
+      "texto_principal": "Mabel",
+      "texto_sub": "Mis 15 años",
+      "bg_color": "#ffffff",
+      "color": "#000000",
+      "color_sub": "#aaaaaa",
+      "font_size": 112,
+      "font_size_sub": 68,
+      "logo": null
+    }
+  ],
+  "logo": null
+}

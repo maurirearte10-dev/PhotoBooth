@@ -1,0 +1,56 @@
+{
+  "nombre": "Oriana",
+  "formato": "tira_5x15",
+  "ancho": 591,
+  "alto": 1772,
+  "n_fotos": 3,
+  "cols": 1,
+  "fondo_color": "#ffffff",
+  "fondo_imagen": null,
+  "layout": "con_texto",
+  "padding": 24,
+  "gap": 14,
+  "slots": [
+    {
+      "type": "foto",
+      "orden": 1,
+      "x": 24,
+      "y": 24,
+      "w": 543,
+      "h": 434
+    },
+    {
+      "type": "foto",
+      "orden": 2,
+      "x": 24,
+      "y": 472,
+      "w": 543,
+      "h": 434
+    },
+    {
+      "type": "foto",
+      "orden": 3,
+      "x": 24,
+      "y": 920,
+      "w": 543,
+      "h": 434
+    },
+    {
+      "type": "texto",
+      "orden": 4,
+      "x": 24,
+      "y": 1368,
+      "w": 543,
+      "h": 379,
+      "texto_principal": "Mabel",
+      "texto_sub": "Mis 15 años",
+      "bg_color": "#ffffff",
+      "color": "#000000",
+      "color_sub": "#aaaaaa",
+      "font_size": 112,
+      "font_size_sub": 68,
+      "logo": null
+    }
+  ],
+  "logo": null
+}
