@@ -512,6 +512,10 @@ class CaptureUI(tk.Toplevel):
                     "Activá una licencia en Configuración para continuar."
                 )
                 return
+        if not self.evento.get("id"):
+            from tkinter import messagebox
+            messagebox.showerror("Error", "Evento no configurado correctamente.")
+            return
         self._estado = "sesion"
         self._sesion_id = self.db.crear_sesion(self.evento["id"])
         self._foto_actual = 0
@@ -575,11 +579,22 @@ class CaptureUI(tk.Toplevel):
         evento_dir = os.path.join(PHOTOS_DIR, str(self.evento["id"]))
         os.makedirs(evento_dir, exist_ok=True)
         ruta = os.path.join(evento_dir, f"sesion_{self._sesion_id}_foto_{indice}.jpg")
-        img.save(ruta, "JPEG", quality=95)
+        try:
+            img.save(ruta, "JPEG", quality=95)
+            if self._sesion_id:
+                self.db.registrar_foto(self._sesion_id, ruta, indice)
+        except OSError as e:
+            print(f"[PhotoBooth] Error guardando foto en disco: {e}")
+            self.after(0, lambda: messagebox.showerror("Error de disco", f"No se pudo guardar la foto: {e}"))
+            return  # No continuar si no se guardó
+        except Exception as e:
+            # BD falló después de guardar en disco — limpiar
+            import os as _os
+            if _os.path.exists(ruta):
+                _os.unlink(ruta)
+            self.after(0, lambda: messagebox.showerror("Error", "Error interno al registrar foto."))
+            return
         self._rutas_fotos.append(ruta)
-
-        if self._sesion_id:
-            self.db.registrar_foto(self._sesion_id, ruta, indice)
 
         self._foto_actual += 1
         self._disparar_flash(img)
@@ -871,10 +886,22 @@ class CaptureUI(tk.Toplevel):
             evento_dir = os.path.join(PHOTOS_DIR, str(self.evento["id"]))
         os.makedirs(evento_dir, exist_ok=True)
         ruta_tira = os.path.join(evento_dir, f"sesion_{self._sesion_id}_tira.jpg")
-        tira.save(ruta_tira, "JPEG", quality=95)
+        try:
+            tira.save(ruta_tira, "JPEG", quality=95)
+            if self._sesion_id:
+                self.db.marcar_fotos_elegidas(self._sesion_id, indices_1based, ruta_tira)
+        except OSError as e:
+            print(f"[PhotoBooth] Error guardando tira: {e}")
+            self.after(0, lambda: messagebox.showerror("Error de disco", f"No se pudo guardar la tira: {e}"))
+            return
+        except Exception as e:
+            # BD falló después de guardar en disco — limpiar
+            import os as _os
+            if _os.path.exists(ruta_tira):
+                _os.unlink(ruta_tira)
+            self.after(0, lambda: messagebox.showerror("Error", "Error interno al registrar la tira."))
+            return
         self._ruta_tira_guardada = ruta_tira
-        if self._sesion_id:
-            self.db.marcar_fotos_elegidas(self._sesion_id, indices_1based, ruta_tira)
 
         # Mostrar preview redimensionado
         preview = tira.copy()
