@@ -165,14 +165,14 @@ class DatabaseManager:
                 print(f"   Email   : {SUPER_ADMIN_EMAIL}")
                 print(f"   Password: {temp_password}")
                 print("=" * 60)
-                # Guardar en archivo de primer arranque junto a la DB
+                # Aviso de primer arranque SIN contraseña (la password solo se muestra en consola)
                 try:
                     first_run = os.path.join(os.path.dirname(DATABASE_PATH), "PRIMERA_VEZ.txt")
                     with open(first_run, "w", encoding="utf-8") as f:
-                        f.write(f"PhotoBooth - Credenciales iniciales\n")
-                        f.write(f"Email   : {SUPER_ADMIN_EMAIL}\n")
-                        f.write(f"Password: {temp_password}\n")
-                        f.write(f"\nEliminá este archivo después de cambiar la contraseña.\n")
+                        f.write("PhotoBooth - Primer arranque\n")
+                        f.write(f"Email: {SUPER_ADMIN_EMAIL}\n")
+                        f.write("La contrasena temporal fue mostrada en la consola al iniciar.\n")
+                        f.write("Cambiala en Configuracion > Usuarios y luego elimina este archivo.\n")
                 except Exception:
                     pass
 
