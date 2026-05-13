@@ -3,7 +3,7 @@ import sys
 
 
 APP_NAME = "PhotoBooth"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 PROGRAM_CODE = "PHOTO_BOOTH"
 PAMPA_API_URL = "https://pampaguazu.com.ar"
 
