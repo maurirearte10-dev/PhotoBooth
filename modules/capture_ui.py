@@ -879,7 +879,7 @@ class CaptureUI(tk.Toplevel):
         self._tira_img = tira
 
         # Guardar tira
-        ruta_digital = self.evento.get("ruta_digital", "")
+        ruta_digital = os.path.realpath(self.evento.get("ruta_digital", "") or "")
         if ruta_digital and os.path.isdir(ruta_digital):
             evento_dir = ruta_digital
         else:

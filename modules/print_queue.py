@@ -217,7 +217,7 @@ class PrintQueue:
         """Compone el par (igual que _imprimir_par) y lo guarda en disco."""
         import os, time
         from config.settings import PHOTOS_DIR
-        evento_dir = evento.get("ruta_digital", "") or ""
+        evento_dir = os.path.realpath(evento.get("ruta_digital", "") or "")
         if not (evento_dir and os.path.isdir(evento_dir)):
             evento_dir = os.path.join(PHOTOS_DIR, str(evento["id"]))
         try:
