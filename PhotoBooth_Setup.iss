@@ -2,7 +2,7 @@
 ; Instalador profesional para PhotoBooth de Pampa Guazú
 
 #define MyAppName "PhotoBooth"
-#define MyAppVersion "1.0.3"
+#define MyAppVersion "1.0.7"
 #define MyAppPublisher "Pampa Guazú"
 #define MyAppURL "https://pampaguazu.com.ar"
 #define MyAppExeName "PhotoBooth.exe"

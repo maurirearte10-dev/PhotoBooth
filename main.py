@@ -52,6 +52,7 @@ class PhotoBoothApp(ctk.CTk):
         self.pampa = PampaClient(PROGRAM_CODE, PAMPA_API_URL)
         self.usuario_actual: dict | None = None
         self._frame_actual: ctk.CTkFrame | None = None
+        self._cabina_activa = False
 
         self._verificar_licencia()
 
@@ -123,15 +124,102 @@ class PhotoBoothApp(ctk.CTk):
     def mostrar_activacion(self, error: str = ""):
         self._set_frame(ActivacionScreen(self, self.db, self.pampa,
                                          on_activado=self.mostrar_login,
-                                         on_trial=lambda: self.mostrar_login(trial=True),
                                          error_inicial=error))
 
-    def mostrar_login(self, trial: bool = False):
-        self._set_frame(LoginScreen(self, self.db, self._on_login_ok, trial=trial))
+    def mostrar_login(self):
+        self._set_frame(LoginScreen(self, self.db, self._on_login_ok))
 
     def _on_login_ok(self, usuario: dict):
         self.usuario_actual = usuario
         self.mostrar_dashboard()
+        threading.Thread(target=self._check_update_bg, daemon=True).start()
+
+    def _check_update_bg(self):
+        info = self.pampa.check_for_updates(APP_VERSION)
+        if info and not self._cabina_activa:
+            self.after(0, self._mostrar_update_dialog, info)
+
+    def _mostrar_update_dialog(self, info: dict):
+        if self._cabina_activa:
+            return
+        latest = info.get("latest_version", "")
+        url = info.get("download_url", "")
+        if not url:
+            return
+
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("Actualización disponible")
+        dlg.geometry("440x280")
+        dlg.resizable(False, False)
+        dlg.configure(fg_color=C["bg_card"])
+        dlg.grab_set()
+        dlg.focus()
+
+        ctk.CTkLabel(dlg, text="Nueva versión disponible",
+                     font=ctk.CTkFont(size=17, weight="bold"),
+                     text_color=C["primary"]).pack(pady=(28, 4))
+        ctk.CTkLabel(dlg, text=f"PhotoBooth {latest} está listo para instalar.",
+                     font=ctk.CTkFont(size=13), text_color=C["text"]).pack()
+
+        changelog = info.get("changelog", {})
+        if isinstance(changelog, dict) and changelog:
+            notas = "\n".join(f"• {v}" for v in list(changelog.values())[:4])
+            ctk.CTkLabel(dlg, text=notas, font=ctk.CTkFont(size=11),
+                         text_color=C["text_gray"], justify="left",
+                         wraplength=380).pack(pady=(10, 0), padx=20)
+
+        btns = ctk.CTkFrame(dlg, fg_color="transparent")
+        btns.pack(side="bottom", pady=24, padx=24, fill="x")
+
+        def hacer_update():
+            dlg.destroy()
+            self._descargar_e_instalar(url, latest)
+
+        ctk.CTkButton(btns, text="Actualizar ahora", fg_color=C["primary"],
+                      hover_color=C["primary_dark"], text_color="#fff",
+                      font=ctk.CTkFont(size=13, weight="bold"), height=36,
+                      command=hacer_update).pack(side="left", expand=True, fill="x", padx=(0, 6))
+        ctk.CTkButton(btns, text="Más tarde", fg_color=C["bg_hover"],
+                      hover_color=C["border"], text_color=C["text_gray"],
+                      font=ctk.CTkFont(size=13), height=36,
+                      command=dlg.destroy).pack(side="left", expand=True, fill="x", padx=(6, 0))
+
+    def _descargar_e_instalar(self, url: str, version: str):
+        import tempfile, subprocess
+
+        prog_dlg = ctk.CTkToplevel(self)
+        prog_dlg.title("Descargando actualización...")
+        prog_dlg.geometry("380x140")
+        prog_dlg.resizable(False, False)
+        prog_dlg.configure(fg_color=C["bg_card"])
+        prog_dlg.grab_set()
+
+        lbl = ctk.CTkLabel(prog_dlg, text=f"Descargando PhotoBooth {version}...",
+                           font=ctk.CTkFont(size=13), text_color=C["text"])
+        lbl.pack(pady=(28, 8))
+        bar = ctk.CTkProgressBar(prog_dlg, width=320)
+        bar.set(0)
+        bar.pack(padx=30)
+
+        dest = os.path.join(tempfile.gettempdir(), f"PhotoBooth_{version}_Setup.exe")
+
+        def progreso(ratio, *_):
+            self.after(0, bar.set, ratio)
+
+        def _hilo():
+            ok = self.pampa.download_update(url, dest, progress_callback=progreso)
+            self.after(0, _post_descarga, ok)
+
+        def _post_descarga(ok: bool):
+            prog_dlg.destroy()
+            if ok:
+                subprocess.Popen([dest, "/SILENT"], creationflags=0x08000000)
+                self.quit()
+            else:
+                from tkinter import messagebox
+                messagebox.showerror("Error", "No se pudo descargar la actualización. Intentá más tarde.")
+
+        threading.Thread(target=_hilo, daemon=True).start()
 
     def mostrar_dashboard(self):
         self._set_frame(DashboardScreen(
@@ -167,7 +255,9 @@ class PhotoBoothApp(ctk.CTk):
     def iniciar_cabina(self, evento: dict):
         from modules.capture_ui import CaptureUI
         ev = {**evento, "_usuario_rol": (self.usuario_actual or {}).get("rol", "")}
+        self._cabina_activa = True
         cabina = CaptureUI(self, self.db, ev)
+        cabina.bind("<Destroy>", lambda e: setattr(self, "_cabina_activa", False))
         cabina.grab_set()
 
     def mostrar_plantillas(self):
@@ -202,19 +292,26 @@ class PhotoBoothApp(ctk.CTk):
 class ActivacionScreen(tk.Canvas):
     """Pantalla de activación de licencia. Se muestra cuando no hay licencia válida."""
 
-    def __init__(self, master, db: DatabaseManager, pampa, on_activado, on_trial,
+    def __init__(self, master, db: DatabaseManager, pampa, on_activado,
                  error_inicial: str = ""):
         super().__init__(master, bd=0, highlightthickness=0, bg="#1c0439")
         self.db       = db
         self.pampa    = pampa
         self.on_activado = on_activado
-        self.on_trial    = on_trial
         self._bg_ref  = None
         self._bg_id   = None
         self._card_id = None
+        self._retry_job = None   # ID del after() para auto-retry
 
-        self.key_var   = ctk.StringVar()
+        # Pre-rellenar clave guardada si existe
+        saved_key = db.get_config("license_key", "").strip()
+        self.key_var   = ctk.StringVar(value=saved_key)
         self.error_var = ctk.StringVar(value=error_inicial)
+
+        # Si ya hay un hardware_mismatch inicial, arrancar auto-retry
+        self._is_hw_mismatch = "hardware_mismatch" in error_inicial.lower() or (
+            "activ" in error_inicial.lower() and "otro equipo" in error_inicial.lower()
+        )
 
         # ── Tarjeta ───────────────────────────────────────────────────────────
         rim  = ctk.CTkFrame(self, fg_color="#7c50d0", corner_radius=28)
@@ -258,23 +355,38 @@ class ActivacionScreen(tk.Canvas):
             command=self._activar)
         self.btn_activar.pack(pady=(10, 6), padx=32)
 
-        ctk.CTkButton(card, text="Continuar sin licencia  →",
-                      fg_color="transparent", text_color=C["text_muted"],
-                      hover_color="#1a0a30", font=ctk.CTkFont(size=12),
-                      width=300, height=32,
-                      command=self.on_trial).pack(pady=(0, 28))
+        ctk.CTkButton(card, text="¿No tenés licencia? Adquirila en pampaguazu.com.ar →",
+                      fg_color="transparent", text_color=C["primary"],
+                      hover_color="#1a0a30", font=ctk.CTkFont(size=11),
+                      width=300, height=28,
+                      command=lambda: __import__("webbrowser").open("https://pampaguazu.com.ar/photobooth#precios")
+                      ).pack(pady=(0, 24))
+
+        # Label de estado auto-retry (solo visible en hardware_mismatch)
+        self.lbl_retry = ctk.CTkLabel(card, text="",
+                                      font=ctk.CTkFont(size=10),
+                                      text_color="#f59e0b",
+                                      wraplength=300)
+        self.lbl_retry.pack(pady=(0, 4))
 
         self._card_id = self.create_window(0, 0, window=rim, anchor="center")
         self.bind("<Configure>", self._on_canvas_resize)
+        self.bind("<Destroy>", lambda _: self._cancel_retry())
         self.winfo_toplevel().bind("<Configure>", self._on_tl_resize, add="+")
         self.after(150, self._render_bg)
         master.bind("<Return>", lambda _: self._activar())
+
+        # Arrancar auto-retry si hay hardware_mismatch inicial con clave guardada
+        if self._is_hw_mismatch and saved_key:
+            self._schedule_retry(30)
 
     def _activar(self):
         key = self.key_var.get().strip().upper()
         if not key:
             self.error_var.set("Ingresá una clave de licencia.")
             return
+        self._cancel_retry()
+        self.lbl_retry.configure(text="")
         self.btn_activar.configure(state="disabled", text="Verificando...")
         self.error_var.set("")
         threading.Thread(target=self._do_activar, args=(key,), daemon=True).start()
@@ -287,6 +399,8 @@ class ActivacionScreen(tk.Canvas):
 
         if not self.winfo_exists():
             return
+        is_hw_mismatch = res and res.get("status") == "hardware_mismatch"
+
         if res and (res.get("valid") or res.get("offline_ok")):
             self.db.set_config("license_key", key)
             self.after(0, self.on_activado)
@@ -294,8 +408,8 @@ class ActivacionScreen(tk.Canvas):
             raw = res.get("message", "") if res else ""
             if not res or "connect" in raw.lower() or "timeout" in raw.lower():
                 msg = "No se pudo conectar con el servidor. Verificá tu conexión."
-            elif "already" in raw.lower() or "activ" in raw.lower():
-                msg = "Esta licencia ya está activada en otro equipo.\nLiberála desde tu panel en pampaguazu.com.ar antes de activarla acá."
+            elif is_hw_mismatch or "already" in raw.lower() or "activ" in raw.lower():
+                msg = "Esta licencia está activa en otro equipo. El soporte fue notificado y liberará el acceso automáticamente."
             elif "invalid" in raw.lower() or "inválid" in raw.lower() or not raw:
                 msg = "Clave de licencia incorrecta. Verificá que la copiaste bien."
             elif "expired" in raw.lower() or "venc" in raw.lower():
@@ -304,11 +418,41 @@ class ActivacionScreen(tk.Canvas):
                 msg = "Esta licencia fue revocada. Contactá a soporte."
             else:
                 msg = raw or "No se pudo activar la licencia."
-            self.after(0, lambda m=msg: self._mostrar_error(m))
+            self.after(0, lambda m=msg, hw=is_hw_mismatch: self._mostrar_error(m, hw))
 
-    def _mostrar_error(self, msg: str):
+    def _mostrar_error(self, msg: str, start_retry: bool = False):
         self.error_var.set(msg)
         self.btn_activar.configure(state="normal", text="Activar licencia")
+        if start_retry and self.key_var.get().strip():
+            self._schedule_retry(30)
+
+    def _schedule_retry(self, seconds: int):
+        """Programa un reintento automático cuando hay hardware_mismatch."""
+        self._cancel_retry()
+        self._retry_countdown(seconds)
+
+    def _cancel_retry(self):
+        if self._retry_job:
+            try:
+                self.after_cancel(self._retry_job)
+            except Exception:
+                pass
+            self._retry_job = None
+
+    def _retry_countdown(self, remaining: int):
+        if not self.winfo_exists():
+            return
+        if remaining <= 0:
+            self.lbl_retry.configure(text="Verificando con el servidor...")
+            self._retry_job = None
+            key = self.key_var.get().strip().upper()
+            if key:
+                threading.Thread(target=self._do_activar, args=(key,), daemon=True).start()
+            return
+        self.lbl_retry.configure(
+            text=f"Reintentando automáticamente en {remaining}s... (el soporte puede liberar tu acceso)"
+        )
+        self._retry_job = self.after(1000, self._retry_countdown, remaining - 1)
 
     # ── Fondo (mismo sistema que LoginScreen) ─────────────────────────────────
     def _center_card(self):
@@ -362,7 +506,7 @@ class ActivacionScreen(tk.Canvas):
 # ── Login Screen ───────────────────────────────────────────────────────────────
 
 class LoginScreen(tk.Canvas):
-    def __init__(self, master, db: DatabaseManager, on_ok, trial=False):
+    def __init__(self, master, db: DatabaseManager, on_ok):
         super().__init__(master, bd=0, highlightthickness=0, bg="#1c0439")
         self.db = db
         self.on_ok = on_ok
@@ -398,11 +542,6 @@ class LoginScreen(tk.Canvas):
         ctk.CTkLabel(card, text=f"v{APP_VERSION}",
                      font=ctk.CTkFont(size=11),
                      text_color=C["text_muted"]).pack(pady=(0, 6))
-
-        if trial:
-            ctk.CTkLabel(card, text=t("login.trial_aviso"),
-                         font=ctk.CTkFont(size=12),
-                         text_color=C["warning"]).pack(pady=(0, 6))
 
         ctk.CTkFrame(card, fg_color="#2a1a4a", height=1,
                      corner_radius=0).pack(fill="x", padx=32, pady=(4, 20))
