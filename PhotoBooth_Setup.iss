@@ -2,7 +2,7 @@
 ; Instalador profesional para PhotoBooth de Pampa Guazú
 
 #define MyAppName "PhotoBooth"
-#define MyAppVersion "1.0.7"
+#define MyAppVersion "1.0.22"
 #define MyAppPublisher "Pampa Guazú"
 #define MyAppURL "https://pampaguazu.com.ar"
 #define MyAppExeName "PhotoBooth.exe"
@@ -40,9 +40,9 @@ Name: "portuguese"; MessagesFile: "compiler:Languages\Portuguese.isl"
 Source: "dist\PhotoBooth\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\photobooth.ico"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\photobooth.ico"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
@@ -83,4 +83,14 @@ begin
   Exec('taskkill', '/F /IM PhotoBooth.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1000);
   Result := True;
+end;
+
+procedure SHChangeNotify(wEventId: Integer; uFlags: Cardinal; dwItem1: Integer; dwItem2: Integer);
+  external 'SHChangeNotify@shell32.dll stdcall';
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssDone then
+    // Forzar refresh del cache de íconos de Windows tras instalar
+    SHChangeNotify($8000000, $1000, 0, 0);
 end;
