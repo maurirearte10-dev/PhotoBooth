@@ -126,7 +126,7 @@ class PlantillasScreen(ctk.CTkFrame):
                             os.remove(ruta)
                         except Exception:
                             pass
-            # Marcar como inactiva (no hay campo activo en plantillas, la borramos directo)
             with self.db._conn() as conn:
+                conn.execute("UPDATE eventos SET plantilla_id = NULL WHERE plantilla_id = ?", (plantilla_id,))
                 conn.execute("DELETE FROM plantillas WHERE id = ?", (plantilla_id,))
             self._cargar()
