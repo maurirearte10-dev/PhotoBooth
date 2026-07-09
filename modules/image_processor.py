@@ -5,29 +5,33 @@ import os
 from PIL import Image, ImageDraw, ImageFont
 from config.settings import ASSETS_DIR
 
-# Tamaños por defecto (5×15 cm a 300 dpi)
-DEFAULT_STRIP_W, DEFAULT_STRIP_H = 591, 1772
+# Tamaños por defecto — 2"×6" exacto a 300 dpi (Kodak 305)
+DEFAULT_STRIP_W, DEFAULT_STRIP_H = 600, 1800
 
 
 def _scan_system_fonts() -> dict[str, str]:
     """Devuelve {nombre_display: ruta_absoluta} de todas las fuentes instaladas."""
     from PIL.ImageFont import FreeTypeFont
     wins_dir = os.environ.get("WINDIR", "C:/Windows")
-    fonts_dir = os.path.join(wins_dir, "Fonts")
+    dirs_a_escanear = [
+        os.path.join(wins_dir, "Fonts"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "Fonts"),
+    ]
     result: dict[str, str] = {}
-    if not os.path.isdir(fonts_dir):
-        return result
-    for fname in sorted(os.listdir(fonts_dir)):
-        if not fname.lower().endswith((".ttf", ".otf")):
+    for fonts_dir in dirs_a_escanear:
+        if not os.path.isdir(fonts_dir):
             continue
-        path = os.path.join(fonts_dir, fname)
-        try:
-            ft = FreeTypeFont(path, size=12)
-            name = ft.getname()[0]   # (family, style) — tomamos family
-            if name and name not in result:
-                result[name] = path
-        except Exception:
-            continue
+        for fname in sorted(os.listdir(fonts_dir)):
+            if not fname.lower().endswith((".ttf", ".otf")):
+                continue
+            path = os.path.join(fonts_dir, fname)
+            try:
+                ft = FreeTypeFont(path, size=12)
+                name = ft.getname()[0]
+                if name and name not in result:
+                    result[name] = path
+            except Exception:
+                continue
     return result
 
 

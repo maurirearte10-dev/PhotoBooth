@@ -195,6 +195,24 @@ class DatabaseManager:
             )
             return cur.lastrowid
 
+    def upsert_usuario_pampa(self, pampa_user: dict) -> dict:
+        """Sincroniza un usuario de PAMPA en la BD local y devuelve el dict con ID local."""
+        email  = pampa_user.get("email", "").strip().lower()
+        nombre = pampa_user.get("nombre", email)
+        rol    = pampa_user.get("rol", "operario")
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM usuarios WHERE email = ?", (email,)).fetchone()
+            if row:
+                conn.execute("UPDATE usuarios SET nombre = ?, rol = ? WHERE email = ?", (nombre, rol, email))
+                row = conn.execute("SELECT * FROM usuarios WHERE email = ?", (email,)).fetchone()
+            else:
+                cur = conn.execute(
+                    "INSERT INTO usuarios (uuid, email, password_hash, nombre, rol, creado_en) VALUES (?,?,?,?,?,?)",
+                    (str(uuid.uuid4()), email, "pampa_auth", nombre, rol, datetime.now().isoformat())
+                )
+                row = conn.execute("SELECT * FROM usuarios WHERE id = ?", (cur.lastrowid,)).fetchone()
+        return dict(row)
+
     def obtener_usuario(self, usuario_id: int) -> Optional[dict]:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM usuarios WHERE id = ?", (usuario_id,)).fetchone()

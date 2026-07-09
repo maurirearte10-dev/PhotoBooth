@@ -1,8 +1,8 @@
 {
-  "nombre": "Oriana",
+  "nombre": "DANIEL",
   "formato": "tira_5x15",
-  "ancho": 591,
-  "alto": 1772,
+  "ancho": 600,
+  "alto": 1800,
   "n_fotos": 3,
   "cols": 1,
   "fondo_color": "#ffffff",
@@ -16,41 +16,43 @@
       "orden": 1,
       "x": 24,
       "y": 24,
-      "w": 543,
-      "h": 434
+      "w": 552,
+      "h": 441
     },
     {
       "type": "foto",
       "orden": 2,
       "x": 24,
-      "y": 472,
-      "w": 543,
-      "h": 434
+      "y": 479,
+      "w": 552,
+      "h": 441
     },
     {
       "type": "foto",
       "orden": 3,
       "x": 24,
-      "y": 920,
-      "w": 543,
-      "h": 434
+      "y": 934,
+      "w": 552,
+      "h": 441
     },
     {
       "type": "texto",
       "orden": 4,
       "x": 24,
-      "y": 1368,
-      "w": 543,
-      "h": 379,
-      "texto_principal": "Mabel",
-      "texto_sub": "Mis 15 años",
+      "y": 1389,
+      "w": 552,
+      "h": 385,
+      "texto_principal": "Daniel",
+      "texto_sub": "Mis 18 Años",
       "bg_color": "#ffffff",
       "color": "#000000",
-      "color_sub": "#aaaaaa",
-      "font_size": 112,
-      "font_size_sub": 68,
+      "color_sub": "#888888",
+      "font_size": 120,
+      "font_size_sub": 56,
+      "font_family": "Saginaw",
+      "bold_principal": true,
+      "bold_sub": false,
       "logo": null
     }
-  ],
-  "logo": null
+  ]
 }

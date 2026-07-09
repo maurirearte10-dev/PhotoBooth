@@ -133,8 +133,10 @@ class ConfiguracionScreen(ctk.CTkFrame):
         box = self._seccion(parent, t("configuracion.sec_licencia"))
         row = self._fila(box, t("configuracion.label_licencia"))
         self.lic_var = ctk.StringVar()
-        ctk.CTkEntry(row, textvariable=self.lic_var, width=340, height=36,
-                     placeholder_text="XXXX-XXXX-XXXX-XXXX").pack(side="left")
+        self._lic_entry = ctk.CTkEntry(row, textvariable=self.lic_var, width=340, height=36,
+                                       placeholder_text="XXXX-XXXX-XXXX-XXXX")
+        self._lic_entry.pack(side="left")
+        self._lic_entry.bind("<Button-3>", self._lic_context_menu)
 
         row2 = ctk.CTkFrame(box, fg_color="transparent")
         row2.pack(fill="x", padx=20, pady=(0, 8))
@@ -146,12 +148,72 @@ class ConfiguracionScreen(ctk.CTkFrame):
             row2, text="", font=ctk.CTkFont(size=11), text_color=C["text_muted"])
         self.lbl_lic_status.pack(side="left")
 
+        # Vencimiento de licencia
+        self.lbl_lic_expiry = ctk.CTkLabel(
+            box, text="", font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=C["text_muted"])
+        self.lbl_lic_expiry.pack(anchor="w", padx=20, pady=(0, 4))
+        self._refresh_expiry_label()
+
         row3 = ctk.CTkFrame(box, fg_color="transparent")
         row3.pack(fill="x", padx=20, pady=(0, 16))
         ctk.CTkButton(row3, text="🔄  Solicitar liberación de licencia", width=260, height=32,
                       fg_color="transparent", border_width=1, border_color=C["border"],
                       text_color=C["text_gray"], font=ctk.CTkFont(size=12),
                       command=self._solicitar_liberacion).pack(side="left")
+
+    def _lic_context_menu(self, event):
+        import tkinter as tk
+        try:
+            w = self._lic_entry._entry
+        except AttributeError:
+            w = self._lic_entry
+        menu = tk.Menu(w, tearoff=0)
+        menu.add_command(label="Cortar",           command=lambda: w.event_generate("<<Cut>>"))
+        menu.add_command(label="Copiar",           command=lambda: w.event_generate("<<Copy>>"))
+        menu.add_command(label="Pegar",            command=lambda: w.event_generate("<<Paste>>"))
+        menu.add_separator()
+        menu.add_command(label="Seleccionar todo", command=lambda: (w.focus_set(), w.event_generate("<<SelectAll>>")))
+        w.focus_set()
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _refresh_expiry_label(self):
+        """Lee expires_at de la DB y actualiza el label con color según urgencia."""
+        if not hasattr(self, "lbl_lic_expiry"):
+            return
+        expires_str = self.db.get_config("license_expires_at", "")
+        if not expires_str:
+            self.lbl_lic_expiry.configure(text="", text_color=C["text_muted"])
+            return
+        try:
+            from datetime import datetime
+            exp = datetime.fromisoformat(expires_str)
+            now = datetime.now()
+            diff = exp - now
+            days = diff.days
+            hours = int(diff.total_seconds() / 3600)
+            fecha = exp.strftime("%d/%m/%Y a las %H:%M")
+            if days < 0:
+                texto = f"⛔  Licencia vencida el {fecha}"
+                color = C["danger"]
+            elif days == 0:
+                texto = f"🔴  Vence HOY a las {exp.strftime('%H:%M')}  ({hours}h restantes)"
+                color = C["danger"]
+            elif days <= 3:
+                texto = f"🔴  Vence el {fecha}  ({days} día{'s' if days != 1 else ''} restante{'s' if days != 1 else ''})"
+                color = C["danger"]
+            elif days <= 7:
+                texto = f"🟠  Vence el {fecha}  ({days} días restantes)"
+                color = C["warning"]
+            elif days <= 30:
+                texto = f"🟡  Vence el {fecha}  ({days} días restantes)"
+                color = "#fbbf24"
+            else:
+                texto = f"🟢  Vence el {fecha}  ({days} días restantes)"
+                color = C["success"]
+            self.lbl_lic_expiry.configure(text=texto, text_color=color)
+        except Exception:
+            self.lbl_lic_expiry.configure(text="", text_color=C["text_muted"])
 
     # ── Carga de valores guardados ──────────────────────────────────────────────
 
@@ -273,11 +335,14 @@ class ConfiguracionScreen(ctk.CTkFrame):
         from config.settings import PROGRAM_CODE, PAMPA_API_URL
         pampa = PampaClient(PROGRAM_CODE, PAMPA_API_URL)
         try:
-            res = pampa.validate_license(key, force_online=True)
+            res = pampa.validate_license(key, force_online=True, explicit_activation=True)
             if res and (res.get("valid") or res.get("offline_ok")):
                 self.db.set_config("license_key", key)
+                if res.get("expires_at"):
+                    self.db.set_config("license_expires_at", res["expires_at"])
                 self.after(0, lambda: self.lbl_lic_status.configure(
                     text=t("configuracion.lic_activada"), text_color=C["success"]))
+                self.after(0, self._refresh_expiry_label)
             else:
                 msg = res.get("message", t("comun.error")) if res else t("comun.error")
                 self.after(0, lambda m=msg: self.lbl_lic_status.configure(

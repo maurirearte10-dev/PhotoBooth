@@ -28,6 +28,11 @@ C = COLORS
 class PhotoBoothApp(ctk.CTk):
     def report_callback_exception(self, exc_type, exc_val, exc_tb):
         import traceback
+        # Ignorar errores internos de CTk al mover ventana entre monitores
+        msg_str = str(exc_val)
+        if exc_type.__name__ == "TclError" and "invalid command name" in msg_str:
+            logging.debug("CTk TclError ignorado (multi-monitor): %s", msg_str)
+            return
         msg = "".join(traceback.format_exception(exc_type, exc_val, exc_tb))
         logging.error("Tkinter callback exception:\n%s", msg)
         from tkinter import messagebox
@@ -58,48 +63,82 @@ class PhotoBoothApp(ctk.CTk):
 
     # ── Licencia ───────────────────────────────────────────────────────────────
 
+    _revalidacion_activa: bool = False
+
     def _verificar_licencia(self):
         self._mostrar_loading("Iniciando PhotoBooth...")
         threading.Thread(target=self._check_lic_bg, daemon=True).start()
 
     def _check_lic_bg(self):
         license_key = self.db.get_config("license_key", "")
-        try:
-            resultado = self.pampa.validate_license(license_key) if license_key else None
-        except Exception:
-            resultado = None
+        if not license_key:
+            self.after(0, self.mostrar_activacion)
+            return
 
-        # Ping de instalación: genera/recupera install_id estable y notifica a PAMPA
-        threading.Thread(target=self._ping_install, args=(license_key,), daemon=True).start()
-
+        resultado = self.pampa.validate_license(license_key)
+        logging.info("Startup validate result: %s", resultado)
         self.after(0, self._on_lic_result, resultado)
 
-    def _ping_install(self, license_key: str):
-        install_id = self.db.get_config("install_id", "")
-        if not install_id:
-            import hashlib, uuid as _uuid
-            install_id = hashlib.sha256(
-                (self.pampa.get_hardware_hash() + str(_uuid.uuid4())).encode()
-            ).hexdigest()[:32]
-            self.db.set_config("install_id", install_id)
-        self.pampa.register_install(install_id, license_key=license_key)
-
     def _on_lic_result(self, resultado):
-        if resultado and (resultado.get("valid") or resultado.get("offline_ok")):
+        status = resultado.get("status", "") if resultado else ""
+        msg = resultado.get("message", "") if resultado else ""
+
+        if resultado and resultado.get("valid"):
+            if resultado.get("expires_at"):
+                self.db.set_config("license_expires_at", resultado["expires_at"])
             self.mostrar_login()
-        elif resultado and resultado.get("status") == "hardware_mismatch":
-            msg = resultado.get("message", "Esta licencia está activa en otro equipo. Solicitá la liberación desde Configuración.")
+            self._iniciar_revalidacion_periodica()
+        elif status == "sin_conexion":
+            self.mostrar_activacion(error=msg or "Sin conexión a internet. PhotoBooth requiere conexión para activar.")
+        elif status == "hardware_mismatch":
+            self.mostrar_activacion(error=msg or "Esta licencia está activa en otro equipo.")
+        elif status == "cooldown":
+            self.mostrar_activacion(error=msg or "Demasiados intentos fallidos. Esperá unos minutos antes de intentar nuevamente.")
+        elif status == "requires_reactivation":
             self.mostrar_activacion(error=msg)
-        elif resultado and resultado.get("status") in ("expired", "revoked", "suspended"):
-            # Licencia guardada pero inválida → pantalla de activación con mensaje
-            msg = resultado.get("message", "Licencia inválida")
+        elif status in ("expired", "revoked", "suspended"):
             self.mostrar_activacion(error=msg)
-        elif self.db.get_config("license_key", ""):
-            # Hay clave guardada pero no se pudo validar (offline sin JWT) → activación
-            self.mostrar_activacion(error="No se pudo validar la licencia. Verifica tu conexión.")
         else:
-            # Sin licencia → pantalla de activación
-            self.mostrar_activacion()
+            self.mostrar_activacion(error=msg or "No se pudo validar la licencia.")
+
+    def _iniciar_revalidacion_periodica(self):
+        """Lanza hilo que re-valida la licencia cada hora en silencio."""
+        if self._revalidacion_activa:
+            return
+        self._revalidacion_activa = True
+        threading.Thread(target=self._loop_revalidacion, daemon=True).start()
+
+    def _loop_revalidacion(self):
+        import time
+        INTERVALO = 3600  # 1 hora
+        while self._revalidacion_activa:
+            time.sleep(INTERVALO)
+            if not self._revalidacion_activa:
+                break
+            license_key = self.db.get_config("license_key", "")
+            if not license_key:
+                break
+            resultado = self.pampa.validate_license(license_key)
+            logging.info("Periodic revalidation: %s", resultado)
+            if not resultado:
+                continue
+            status = resultado.get("status", "")
+            # Sin internet o cooldown durante sesión activa → ignorar, seguir usando
+            if status in ("offline_grace", "sin_conexion", "cooldown"):
+                continue
+            if resultado.get("valid") and resultado.get("expires_at"):
+                self.db.set_config("license_expires_at", resultado["expires_at"])
+            # Licencia revocada/expirada/suspendida o hardware_mismatch → cerrar sesión
+            if not resultado.get("valid"):
+                self._revalidacion_activa = False
+                msg = resultado.get("message", "La licencia ya no es válida.")
+                self.after(0, lambda m=msg: self._forzar_desconexion(m))
+
+    def _forzar_desconexion(self, msg: str):
+        """Cierra la sesión activa si la licencia fue revocada durante el uso."""
+        self._revalidacion_activa = False
+        self.usuario_actual = None
+        self.mostrar_activacion(error=msg)
 
     # ── Navegación ─────────────────────────────────────────────────────────────
 
@@ -132,6 +171,7 @@ class PhotoBoothApp(ctk.CTk):
     def _on_login_ok(self, usuario: dict):
         self.usuario_actual = usuario
         self.mostrar_dashboard()
+        self._iniciar_revalidacion_periodica()
         threading.Thread(target=self._check_update_bg, daemon=True).start()
 
     def _check_update_bg(self):
@@ -149,40 +189,42 @@ class PhotoBoothApp(ctk.CTk):
 
         dlg = ctk.CTkToplevel(self)
         dlg.title("Actualización disponible")
-        dlg.geometry("440x280")
+        dlg.geometry("460x300")
         dlg.resizable(False, False)
         dlg.configure(fg_color=C["bg_card"])
         dlg.grab_set()
         dlg.focus()
 
+        def hacer_update():
+            dlg.destroy()
+            self._descargar_e_instalar(url, latest)
+
+        # Botones primero (side=bottom) para garantizar que siempre sean visibles
+        btns = ctk.CTkFrame(dlg, fg_color="transparent")
+        btns.pack(side="bottom", pady=20, padx=24, fill="x")
+        ctk.CTkButton(btns, text="Actualizar ahora", fg_color=C["primary"],
+                      hover_color=C["primary_dark"], text_color="#fff",
+                      font=ctk.CTkFont(size=13, weight="bold"), height=38,
+                      command=hacer_update).pack(side="left", expand=True, fill="x", padx=(0, 6))
+        ctk.CTkButton(btns, text="Más tarde", fg_color=C["bg_hover"],
+                      hover_color=C["border"], text_color=C["text_gray"],
+                      font=ctk.CTkFont(size=13), height=38,
+                      command=dlg.destroy).pack(side="left", expand=True, fill="x", padx=(6, 0))
+
+        # Contenido arriba
         ctk.CTkLabel(dlg, text="Nueva versión disponible",
                      font=ctk.CTkFont(size=17, weight="bold"),
-                     text_color=C["primary"]).pack(pady=(28, 4))
+                     text_color=C["primary"]).pack(pady=(24, 4))
         ctk.CTkLabel(dlg, text=f"PhotoBooth {latest} está listo para instalar.",
                      font=ctk.CTkFont(size=13), text_color=C["text"]).pack()
 
         changelog = info.get("changelog", {})
         if isinstance(changelog, dict) and changelog:
-            notas = "\n".join(f"• {v}" for v in list(changelog.values())[:4])
+            # Limitar a 3 puntos para que no desborde el diálogo
+            notas = "\n".join(f"• {v}" for v in list(changelog.values())[:3])
             ctk.CTkLabel(dlg, text=notas, font=ctk.CTkFont(size=11),
                          text_color=C["text_gray"], justify="left",
-                         wraplength=380).pack(pady=(10, 0), padx=20)
-
-        btns = ctk.CTkFrame(dlg, fg_color="transparent")
-        btns.pack(side="bottom", pady=24, padx=24, fill="x")
-
-        def hacer_update():
-            dlg.destroy()
-            self._descargar_e_instalar(url, latest)
-
-        ctk.CTkButton(btns, text="Actualizar ahora", fg_color=C["primary"],
-                      hover_color=C["primary_dark"], text_color="#fff",
-                      font=ctk.CTkFont(size=13, weight="bold"), height=36,
-                      command=hacer_update).pack(side="left", expand=True, fill="x", padx=(0, 6))
-        ctk.CTkButton(btns, text="Más tarde", fg_color=C["bg_hover"],
-                      hover_color=C["border"], text_color=C["text_gray"],
-                      font=ctk.CTkFont(size=13), height=36,
-                      command=dlg.destroy).pack(side="left", expand=True, fill="x", padx=(6, 0))
+                         wraplength=400).pack(pady=(10, 0), padx=20)
 
     def _descargar_e_instalar(self, url: str, version: str):
         import tempfile, subprocess
@@ -283,6 +325,7 @@ class PhotoBoothApp(ctk.CTk):
         ))
 
     def _logout(self):
+        self._revalidacion_activa = False
         self.usuario_actual = None
         self.mostrar_login()
 
@@ -392,33 +435,25 @@ class ActivacionScreen(tk.Canvas):
         threading.Thread(target=self._do_activar, args=(key,), daemon=True).start()
 
     def _do_activar(self, key: str):
-        try:
-            res = self.pampa.validate_license(key, force_online=True)
-        except Exception as e:
-            res = {"valid": False, "message": str(e)}
+        res = self.pampa.validate_license(key, explicit_activation=True)
+        logging.info("activate result: %s", res)
 
         if not self.winfo_exists():
             return
-        is_hw_mismatch = res and res.get("status") == "hardware_mismatch"
 
-        if res and (res.get("valid") or res.get("offline_ok")):
+        if res and res.get("valid"):
             self.db.set_config("license_key", key)
             self.after(0, self.on_activado)
-        else:
-            raw = res.get("message", "") if res else ""
-            if not res or "connect" in raw.lower() or "timeout" in raw.lower():
-                msg = "No se pudo conectar con el servidor. Verificá tu conexión."
-            elif is_hw_mismatch or "already" in raw.lower() or "activ" in raw.lower():
-                msg = "Esta licencia está activa en otro equipo. El soporte fue notificado y liberará el acceso automáticamente."
-            elif "invalid" in raw.lower() or "inválid" in raw.lower() or not raw:
-                msg = "Clave de licencia incorrecta. Verificá que la copiaste bien."
-            elif "expired" in raw.lower() or "venc" in raw.lower():
-                msg = "Esta licencia está vencida. Renovála desde pampaguazu.com.ar."
-            elif "revoked" in raw.lower():
-                msg = "Esta licencia fue revocada. Contactá a soporte."
-            else:
-                msg = raw or "No se pudo activar la licencia."
-            self.after(0, lambda m=msg, hw=is_hw_mismatch: self._mostrar_error(m, hw))
+            return
+
+        status = res.get("status", "") if res else "error"
+        msg = res.get("message", "") if res else "No se pudo conectar con el servidor."
+        is_hw_mismatch = status == "hardware_mismatch"
+
+        if status == "hardware_mismatch":
+            msg = msg or "Esta licencia está activa en otro equipo. El soporte puede liberarla desde el panel."
+
+        self.after(0, lambda m=msg, hw=is_hw_mismatch: self._mostrar_error(m, hw))
 
     def _mostrar_error(self, msg: str, start_retry: bool = False):
         self.error_var.set(msg)
@@ -665,16 +700,23 @@ class LoginScreen(tk.Canvas):
         self.after(50, lambda: self._do_login(email, pwd))
 
     def _do_login(self, email, pwd):
-        usuario = self.db.autenticar_usuario(email, pwd)
-        if usuario:
+        from modules.pampa_client import PampaClient
+        from config.settings import PROGRAM_CODE, PAMPA_API_URL
+        pampa = PampaClient(PROGRAM_CODE, PAMPA_API_URL)
+        res = pampa.login(email, pwd)
+
+        if res and res.get("success"):
+            # Sincronizar usuario en BD local para que las FK funcionen
+            usuario_local = self.db.upsert_usuario_pampa(res.get("usuario", {}))
             if self.remember_var.get():
                 self.db.set_config("remember_email", email)
             else:
                 self.db.set_config("remember_email", "")
             self.winfo_toplevel().unbind("<Return>")
-            self.on_ok(usuario)
+            self.on_ok(usuario_local)
         else:
-            self.error_var.set("Correo o contraseña incorrectos")
+            error = res.get("error", "Correo o contraseña incorrectos") if res else "Sin conexión a internet."
+            self.error_var.set(error)
             self.btn.configure(state="normal", text="Ingresar")
 
 

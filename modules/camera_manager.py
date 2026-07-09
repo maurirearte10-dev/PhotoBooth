@@ -39,11 +39,22 @@ class CameraManager:
         for backend in cls._BACKENDS:
             try:
                 cap = cv2.VideoCapture(index, backend)
-                if cap.isOpened():
-                    ok, _ = cap.read()
-                    if ok:
-                        return cap
+                if not cap.isOpened():
                     cap.release()
+                    continue
+                # cap.read() puede bloquearse si el índice existe en el registro
+                # pero el dispositivo no responde — lo envolvemos en un thread con timeout
+                result = [False, None]
+
+                def _read():
+                    result[0], result[1] = cap.read()
+
+                t = threading.Thread(target=_read, daemon=True)
+                t.start()
+                t.join(timeout=2.0)
+                if result[0]:
+                    return cap
+                cap.release()
             except Exception:
                 pass
         return None
@@ -59,8 +70,9 @@ class CameraManager:
                 "Select-Object -ExpandProperty FriendlyName"
             )
             r = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", cmd],
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
                 capture_output=True, text=True, timeout=8,
+                creationflags=0x08000000  # CREATE_NO_WINDOW
             )
             return [n.strip() for n in r.stdout.splitlines() if n.strip()]
         except Exception:

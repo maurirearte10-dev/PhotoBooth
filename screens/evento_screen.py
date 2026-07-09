@@ -456,6 +456,9 @@ class EventoScreen(ctk.CTkFrame):
         tk.Label(win, textvariable=status_var, bg="#111", fg="#aaa",
                  font=("Arial", 11)).pack()
 
+        from modules.camera_manager import CameraManager
+        cam = CameraManager()
+
         btn_captura = tk.Button(win, text="📸  Capturar foto",
                                 bg=C["primary"], fg="#000",
                                 font=("Arial", 12, "bold"),
@@ -469,39 +472,39 @@ class EventoScreen(ctk.CTkFrame):
                   padx=16, pady=6,
                   command=lambda: self._cerrar_cam_preview(cam, win)).pack(pady=(0, 16))
 
-        from modules.camera_manager import CameraManager
-        cam = CameraManager()
+        threading.Thread(
+            target=lambda: cam.iniciar_preview(cam_index, callback=None, width=640, height=480),
+            daemon=True,
+        ).start()
 
-        def start_preview():
-            cam.iniciar_preview(cam_index,
-                                lambda img: self._on_cam_frame(img, lbl_img, status_var, win),
-                                width=640, height=480)
+        def poll_frame():
+            if not win.winfo_exists():
+                return
+            with cam._frame_lock:
+                img = cam._ultimo_frame
+            if img is not None:
+                preview = img.copy()
+                preview.thumbnail((480, 360), Image.BILINEAR)
+                photo = ImageTk.PhotoImage(preview)
+                lbl_img._photo = photo
+                lbl_img.configure(image=photo)
+                status_var.set("✓ Cámara activa")
+            win._poll_id = win.after(40, poll_frame)  # ~25 fps desde el thread de Tkinter
 
-        threading.Thread(target=start_preview, daemon=True).start()
-
+        win._poll_id = win.after(40, poll_frame)
         win.protocol("WM_DELETE_WINDOW", lambda: self._cerrar_cam_preview(cam, win))
 
-    def _on_cam_frame(self, img: Image.Image, lbl, status_var, win):
-        if not win.winfo_exists():
-            return
-        preview = img.copy()
-        preview.thumbnail((480, 360), Image.BILINEAR)
-        photo = ImageTk.PhotoImage(preview)
-        lbl._photo = photo
-        try:
-            win.after(0, lambda: lbl.configure(image=photo))
-            win.after(0, lambda: status_var.set("✓ Cámara activa"))
-        except Exception:
-            pass
-
-    def _captura_test(self, cam: CameraManager, lbl, status_var):
+    def _captura_test(self, cam, lbl, status_var):
         img = cam.capturar_foto()
         if img:
             status_var.set("✓ Foto capturada correctamente")
         else:
             status_var.set("⚠  No se pudo capturar foto")
 
-    def _cerrar_cam_preview(self, cam: CameraManager, win):
+    def _cerrar_cam_preview(self, cam, win):
+        poll_id = getattr(win, '_poll_id', None)
+        if poll_id and win.winfo_exists():
+            win.after_cancel(poll_id)
         cam.detener_preview()
         if win.winfo_exists():
             win.destroy()

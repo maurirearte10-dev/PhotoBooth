@@ -53,9 +53,12 @@ class CaptureUI(tk.Toplevel):
         self._cd_after_id: str | None = None
         self._foto_actual: int = 0
         self._idle_timer: str | None = None
+        self._idle_timeout_ms: int = int(db.get_config("idle_timeout", "60")) * 1000
         self._slideshow_after_id: str | None = None
         self._cd_texto: str = ""        # texto del countdown a dibujar sobre la cámara
         self._cd_overlay_cache: dict = {}  # {(txt,w,h): imagen pre-renderizada}
+        self._cd_anim_t: float = 1.0   # 0.0 = número recién cambió, 1.0 = estático
+        self._cd_anim_dur: int = 10    # frames a 40ms = 400ms de animación
         self._slide_tiras: list[str] = []
         self._slide_idx: int = 0
         self._slide_photo_ref = None   # evitar GC
@@ -132,52 +135,133 @@ class CaptureUI(tk.Toplevel):
     def _build_overlay_idle(self):
         self.frm_idle = ctk.CTkFrame(self, fg_color="#08050f", corner_radius=0)
 
+        # Un solo PIL canvas — texto + gradiente en una imagen, sin bordes de fondo
+        self._idle_canvas_lbl = tk.Label(self.frm_idle, bg="#08050f", bd=0,
+                                          highlightthickness=0)
+        self._idle_canvas_lbl.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.frm_idle.bind("<Configure>", self._on_idle_resize)
+
         # ── Slideshow de tiras (panel derecho) ───────────────────────────────
-        # Marco decorativo con borde primary; se muestra solo si hay tiras
         self._slide_card = ctk.CTkFrame(
-            self.frm_idle,
-            fg_color="#110d1a",
-            corner_radius=20,
-            border_width=2,
-            border_color=C["primary"],
+            self.frm_idle, fg_color="#110d1a", corner_radius=20,
+            border_width=2, border_color=C["primary"],
         )
         self.lbl_slide = ctk.CTkLabel(self._slide_card, text="", fg_color="transparent")
         self.lbl_slide.pack(padx=14, pady=(14, 6))
-
         self.lbl_slide_info = ctk.CTkLabel(
             self._slide_card, text="",
-            font=ctk.CTkFont(size=11),
-            text_color=C["text_muted"],
+            font=ctk.CTkFont(size=11), text_color=C["text_muted"],
             fg_color="transparent",
         )
         self.lbl_slide_info.pack(pady=(0, 12))
 
-        # ── Contenido central ────────────────────────────────────────────────
-        ctk.CTkLabel(self.frm_idle, text="📸",
-                     font=ctk.CTkFont(size=80),
-                     text_color="#ffffff").place(relx=0.38, rely=0.30, anchor="center")
+        # Único widget interactivo: el botón
+        self._idle_btn = ctk.CTkButton(
+            self.frm_idle, text="✦  Tocar para comenzar  ✦",
+            height=68, width=460,
+            font=ctk.CTkFont(family="Segoe UI", size=20, weight="bold"),
+            fg_color=C["primary"], text_color="#ffffff",
+            hover_color=C["primary_dark"], corner_radius=34,
+            command=self._on_espacio)
 
-        ctk.CTkLabel(self.frm_idle, text=t("cabina.idle_titulo"),
-                     font=ctk.CTkFont(size=58, weight="bold"),
-                     text_color=C["primary"]).place(relx=0.38, rely=0.46, anchor="center")
-
-        ctk.CTkLabel(self.frm_idle, text=t("cabina.idle_subtitulo"),
-                     font=ctk.CTkFont(size=22),
-                     text_color=C["text_gray"]).place(relx=0.38, rely=0.57, anchor="center")
-
-        ctk.CTkButton(self.frm_idle, text="✦  Tocar para comenzar  ✦",
-                      height=68, width=440,
-                      font=ctk.CTkFont(size=20, weight="bold"),
-                      fg_color=C["primary"], text_color="#ffffff",
-                      hover_color=C["primary_dark"],
-                      corner_radius=34,
-                      command=self._on_espacio).place(relx=0.38, rely=0.72, anchor="center")
-
-        ctk.CTkLabel(self.frm_idle, text="o presioná  ESPACIO",
-                     font=ctk.CTkFont(size=13),
-                     text_color=C["text_muted"]).place(relx=0.38, rely=0.82, anchor="center")
-
+        self._idle_cx = 0.5
+        self._idle_btn.place(relx=self._idle_cx, rely=0.70, anchor="center")
         self.frm_idle.bind("<Button-1>", lambda _: self._on_espacio())
+
+    def _posicionar_idle_content(self):
+        self._idle_btn.place(relx=self._idle_cx, rely=0.70, anchor="center")
+        # El canvas PIL se re-renderiza en el próximo resize event
+        w = self.frm_idle.winfo_width()
+        h = self.frm_idle.winfo_height()
+        if w > 20 and h > 20:
+            self._renderizar_idle_canvas(w, h)
+
+    def _on_idle_resize(self, event):
+        if event.width < 20 or event.height < 20:
+            return
+        self._renderizar_idle_canvas(event.width, event.height)
+
+    def _renderizar_idle_canvas(self, w: int, h: int):
+        from PIL import Image, ImageDraw, ImageFilter, ImageFont
+        import os
+
+        # ── Fondo con glow radial sutil ──────────────────────────────────────
+        bg = Image.new("RGB", (w, h), "#08050f")
+        glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(glow)
+        mx, my = int(w * 0.12), int(h * 0.08)
+        gd.ellipse([mx, my, w - mx, h - my], fill=(75, 15, 130, 50))
+        glow = glow.filter(ImageFilter.GaussianBlur(radius=min(w, h) // 5))
+        canvas = Image.alpha_composite(bg.convert("RGBA"), glow).convert("RGB")
+        draw = ImageDraw.Draw(canvas)
+
+        cx = int(w * self._idle_cx)
+
+        # ── Helper fuente ────────────────────────────────────────────────────
+        def _font(size, bold=False):
+            wins = os.environ.get("WINDIR", "C:/Windows")
+            for name in (("seguibl.ttf" if bold else "segoeui.ttf"),
+                         ("arialbd.ttf" if bold else "arial.ttf")):
+                path = os.path.join(wins, "Fonts", name)
+                if os.path.exists(path):
+                    try:
+                        return ImageFont.truetype(path, size)
+                    except Exception:
+                        pass
+            return ImageFont.load_default()
+
+        # ── Ícono cámara (PIL) ───────────────────────────────────────────────
+        icon_size = max(60, min(int(h * 0.09), 96))
+        icon = Image.new("RGBA", (icon_size, icon_size), (0, 0, 0, 0))
+        di = ImageDraw.Draw(icon)
+        s = icon_size
+        p = int(s * 0.08)
+        body_top = int(s * 0.28)
+        di.rounded_rectangle([p, body_top, s - p, s - p], radius=int(s * 0.14),
+                              fill=(180, 155, 240, 210), outline=(255, 255, 255, 160),
+                              width=max(1, int(s * 0.04)))
+        vw = int(s * 0.24)
+        vx = (s - vw) // 2
+        di.rounded_rectangle([vx, int(s * 0.13), vx + vw, body_top],
+                              radius=int(s * 0.06), fill=(180, 155, 240, 170))
+        lc, lr = s // 2, int(s * 0.17)
+        ly = body_top + int(s * 0.09)
+        di.ellipse([lc - lr, ly, lc + lr, ly + lr * 2],
+                   fill=(25, 8, 45, 200), outline=(255, 255, 255, 190),
+                   width=max(1, int(s * 0.04)))
+        fx, fy, fr = int(s * 0.73), body_top + int(s * 0.09), int(s * 0.06)
+        di.ellipse([fx - fr, fy - fr, fx + fr, fy + fr], fill=(255, 245, 180, 220))
+        ix = cx - icon_size // 2
+        iy = int(h * 0.25) - icon_size // 2
+        canvas.paste(icon, (ix, iy), icon)
+
+        # ── Título ───────────────────────────────────────────────────────────
+        titulo = t("cabina.idle_titulo")
+        tf = _font(max(36, int(h * 0.075)), bold=True)
+        tb = draw.textbbox((0, 0), titulo, font=tf)
+        tx = cx - (tb[2] - tb[0]) // 2 - tb[0]
+        ty = int(h * 0.41)
+        draw.text((tx, ty), titulo, fill=C["primary"], font=tf)
+
+        # ── Subtítulo ────────────────────────────────────────────────────────
+        sub = t("cabina.idle_subtitulo")
+        sf = _font(max(16, int(h * 0.026)))
+        sb = draw.textbbox((0, 0), sub, font=sf)
+        sx = cx - (sb[2] - sb[0]) // 2 - sb[0]
+        sy = int(h * 0.545)
+        draw.text((sx, sy), sub, fill=C["text_gray"], font=sf)
+
+        # ── Hint ─────────────────────────────────────────────────────────────
+        hint = "o presioná  ESPACIO"
+        hf = _font(max(12, int(h * 0.016)))
+        hb = draw.textbbox((0, 0), hint, font=hf)
+        hx = cx - (hb[2] - hb[0]) // 2 - hb[0]
+        hy = int(h * 0.795)
+        draw.text((hx, hy), hint, fill=C["text_muted"], font=hf)
+
+        photo = ImageTk.PhotoImage(canvas)
+        self._idle_canvas_lbl._photo = photo
+        self._idle_canvas_lbl.configure(image=photo)
 
     def _build_overlay_countdown(self):
         # Número flotante sobre la cámara — sin fondo oscuro para no tapar la pose
@@ -424,7 +508,11 @@ class CaptureUI(tk.Toplevel):
         self._slide_tiras = self._obtener_tiras()
         if not self._slide_tiras:
             self._slide_card.place_forget()
+            self._idle_cx = 0.5      # sin tiras → centrado
+            self._posicionar_idle_content()
             return
+        self._idle_cx = 0.38         # con tiras → corrido a la izquierda
+        self._posicionar_idle_content()
         self._slide_idx = 0
         self._slide_card.place(relx=0.80, rely=0.50, anchor="center")
         self._tick_slideshow()
@@ -542,10 +630,11 @@ class CaptureUI(tk.Toplevel):
             return  # espera hasta que _reanudar_countdown lo relame
         if self._countdown_val > 0:
             self._cd_texto = str(self._countdown_val)
+            self._cd_anim_t = 0.0   # arrancar zoom-in al cambiar número
             self._countdown_val -= 1
             self._cd_after_id = self.after(1000, self._tick_countdown)
         else:
-            self._cd_texto = "📸"
+            self._cd_texto = ""
             self._cd_after_id = self.after(300, self._limpiar_cd_y_capturar)
 
     def _on_click(self, event):
@@ -560,7 +649,7 @@ class CaptureUI(tk.Toplevel):
             if self._cd_after_id:
                 self.after_cancel(self._cd_after_id)
                 self._cd_after_id = None
-            self._cd_texto = "⏸"
+            self._cd_texto = ""   # sin overlay al pausar — usuario toca de nuevo para reanudar
 
     def _limpiar_cd_y_capturar(self):
         self._cd_texto = ""
@@ -692,6 +781,7 @@ class CaptureUI(tk.Toplevel):
         self.frm_seleccion.place(relx=0, rely=0, relwidth=1, relheight=1)
         self._indices_elegidos.clear()
         self._poblar_grid_seleccion()
+        self._iniciar_idle_timer()
 
     def _poblar_grid_seleccion(self):
         # Limpiar fotos anteriores (excepto header y botón)
@@ -805,6 +895,7 @@ class CaptureUI(tk.Toplevel):
         self._ocultar_todos()
         self.frm_reorden.place(relx=0, rely=0, relwidth=1, relheight=1)
         self._poblar_grid_reorden()
+        self._iniciar_idle_timer()
 
     def _poblar_grid_reorden(self):
         for w in self.frm_reorden_grid.winfo_children():
@@ -868,6 +959,7 @@ class CaptureUI(tk.Toplevel):
         from modules.image_processor import ImageProcessor
         self._estado = "preview"
         self._ocultar_todos()
+        self._iniciar_idle_timer()
 
         # orden es lista de índices 1-based en el orden final
         fotos_elegidas = [self._fotos[i - 1] for i in orden]
@@ -928,6 +1020,7 @@ class CaptureUI(tk.Toplevel):
         self._estado = "imprimiendo"
         self._ocultar_todos()
         self.frm_gracias.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self._iniciar_idle_timer()
         if self.evento.get("modo_salida", "imprimir") == "digital":
             self.lbl_impresion_status.configure(text="✓  Sesión guardada")
             self.after(2500, self._nueva_sesion)
@@ -1289,8 +1382,8 @@ class CaptureUI(tk.Toplevel):
         hi = max(2, stroke // 5)
         draw.text((x - hi, y - hi), txt, fill=(230, 200, 255, 120), font=font)
 
-        # "¡Sonreí! 😄" con stroke oscuro
-        sub = "¡Sonreí! 😄"
+        # "¡Sonreí!" con stroke oscuro (sin emoji — Arial no los soporta en Windows)
+        sub = "¡ Sonreí !"
         sf_size = int(h * 0.048)
         sfont = None
         for nombre in ("arialbd.ttf", "arial.ttf", "DejaVuSans-Bold.ttf"):
@@ -1346,6 +1439,18 @@ class CaptureUI(tk.Toplevel):
             txt = self._cd_texto
             if txt:
                 overlay = self._cd_get_overlay(txt, w, h)
+                # Animación zoom-in cuando el número cambia (0.0→1.0 en _cd_anim_dur frames)
+                if self._cd_anim_t < 1.0:
+                    self._cd_anim_t = min(1.0, self._cd_anim_t + 1.0 / self._cd_anim_dur)
+                    scale = 1.0 + 0.38 * (1.0 - self._cd_anim_t)  # 1.38x → 1.0x
+                    alpha_factor = 0.4 + 0.6 * self._cd_anim_t     # arranca en 40% opacidad, llega a 100%
+                    sw, sh = int(w * scale), int(h * scale)
+                    scaled = overlay.resize((sw, sh), Image.BILINEAR)
+                    cx, cy = (sw - w) // 2, (sh - h) // 2
+                    scaled = scaled.crop((cx, cy, cx + w, cy + h))
+                    r, g, b, a = scaled.split()
+                    a = a.point(lambda x: int(x * alpha_factor))
+                    overlay = Image.merge("RGBA", (r, g, b, a))
                 frame = Image.alpha_composite(frame.convert("RGBA"), overlay).convert("RGB")
             photo = ImageTk.PhotoImage(frame)
             self._last_photo = photo       # evitar GC
@@ -1362,6 +1467,13 @@ class CaptureUI(tk.Toplevel):
         if self._idle_timer:
             self.after_cancel(self._idle_timer)
         self._idle_timer = None
+
+    def _iniciar_idle_timer(self):
+        """Programa el retorno automático a idle tras inactividad."""
+        if self._idle_timer:
+            self.after_cancel(self._idle_timer)
+        if self._idle_timeout_ms > 0 and self._estado != "idle":
+            self._idle_timer = self.after(self._idle_timeout_ms, self._ir_idle)
 
     # ── Utilidades ─────────────────────────────────────────────────────────────
 
