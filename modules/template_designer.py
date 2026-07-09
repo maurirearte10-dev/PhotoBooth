@@ -225,7 +225,8 @@ class TemplateDesigner(ctk.CTkToplevel):
             if s.get("type") == "texto" and s["orden"] in textos_viejos:
                 viejo = textos_viejos[s["orden"]]
                 for k in ("texto_principal", "texto_sub", "bg_color",
-                           "color", "color_sub", "font_size", "font_size_sub", "logo"):
+                           "color", "color_sub", "font_size", "font_size_sub", "logo",
+                           "font_family", "bold_principal", "bold_sub"):
                     s[k] = viejo.get(k, s.get(k, ""))
         cfg["slots"] = nuevos
 
