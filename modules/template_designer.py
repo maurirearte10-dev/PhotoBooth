@@ -618,6 +618,18 @@ class TemplateDesigner(ctk.CTkToplevel):
             ctk.CTkLabel(r, textvariable=var,
                          text_color=C["text"], width=40).pack(side="left")
 
+        # Botón centrar panel de texto
+        def _centrar_panel_texto():
+            W = self._config.get("ancho", 600)
+            w = self.tp_w_var.get()
+            self.tp_x_var.set((W - w) // 2)
+            self._on_texto_panel_change()
+
+        ctk.CTkButton(inner, text="↔ Centrar horizontalmente", height=30,
+                      fg_color="transparent", border_width=1, border_color=C["primary"],
+                      text_color=C["primary"], font=ctk.CTkFont(size=11),
+                      command=_centrar_panel_texto).pack(padx=12, fill="x", pady=(4, 2))
+
         ctk.CTkFrame(inner, height=1, fg_color=C["border"]).pack(fill="x", padx=12, pady=(8, 6))
 
         # ── Colores ───────────────────────────────────────────────────────────
