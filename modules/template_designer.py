@@ -37,6 +37,7 @@ LAYOUT_PRESETS = [
     {"key": "simetrico",    "label": "Simétrico",          "desc": "Fotos del mismo tamaño, una columna"},
     {"key": "con_texto",    "label": "Fotos + Panel texto", "desc": "3 fotos + 1 panel de branding al final"},
     {"key": "dos_columnas", "label": "Dos columnas",        "desc": "Grilla 2×N (para 10×15 cm)"},
+    {"key": "fotos_arriba", "label": "Fotos arriba (fondo decorativo)", "desc": "Fotos en zona superior, diseño de fondo visible abajo"},
 ]
 
 
@@ -130,6 +131,8 @@ class TemplateDesigner(ctk.CTkToplevel):
             return self._slots_dos_columnas(W, H, n_fotos, padding, gap)
         elif layout == "con_texto":
             return self._slots_con_texto(W, H, n_fotos, padding, gap)
+        elif layout == "fotos_arriba":
+            return self._slots_fotos_arriba(W, H, n_fotos, padding, gap)
         else:
             return self._slots_simetrico(W, H, n_fotos, padding, gap)
 
@@ -159,6 +162,19 @@ class TemplateDesigner(ctk.CTkToplevel):
             slots.append({"type": "foto", "orden": i + 1, "x": x, "y": y,
                           "w": foto_w, "h": foto_h})
         return slots
+
+    @staticmethod
+    def _slots_fotos_arriba(W, H, n, padding, gap) -> list[dict]:
+        """Fotos ocupan el 65% superior; el 35% inferior queda libre para el diseño de fondo."""
+        foto_w = W - padding * 2
+        zona_fotos_h = int(H * 0.65) - padding
+        foto_h = max(20, (zona_fotos_h - gap * (n - 1)) // n)
+        return [
+            {"type": "foto", "orden": i + 1,
+             "x": padding, "y": padding + i * (foto_h + gap),
+             "w": foto_w, "h": foto_h}
+            for i in range(n)
+        ]
 
     @staticmethod
     def _slots_con_texto(W, H, n, padding, gap, branding_h: int | None = None) -> list[dict]:
@@ -297,6 +313,28 @@ class TemplateDesigner(ctk.CTkToplevel):
         self.frm_orden.pack(padx=0, fill="x")
         self._build_orden_ui()
 
+        # Centrado
+        self._sec(left, "Centrado")
+        centro_f = ctk.CTkFrame(left, fg_color=C["bg_hover"], corner_radius=10,
+                                border_width=1, border_color=C["border"])
+        centro_f.pack(padx=16, fill="x", pady=(0, 10))
+        ctk.CTkLabel(centro_f, text="Alinea slots al centro horizontal del canvas.",
+                     font=ctk.CTkFont(size=10), text_color=C["text_muted"],
+                     wraplength=320).pack(padx=12, pady=(8, 4), anchor="w")
+        btn_row = ctk.CTkFrame(centro_f, fg_color="transparent")
+        btn_row.pack(padx=8, pady=(0, 8), fill="x")
+        ctk.CTkButton(btn_row, text="↔ Fotos", width=90, height=30,
+                      fg_color="transparent", border_width=1, border_color=C["border"],
+                      text_color=C["text"], font=ctk.CTkFont(size=11),
+                      command=lambda: self._centrar_slots("foto")).pack(side="left", padx=2)
+        ctk.CTkButton(btn_row, text="↔ Texto", width=90, height=30,
+                      fg_color="transparent", border_width=1, border_color=C["border"],
+                      text_color=C["text"], font=ctk.CTkFont(size=11),
+                      command=lambda: self._centrar_slots("texto")).pack(side="left", padx=2)
+        ctk.CTkButton(btn_row, text="↔ Todo", width=90, height=30,
+                      fg_color=C["primary"], text_color="#fff", font=ctk.CTkFont(size=11),
+                      command=lambda: self._centrar_slots("todo")).pack(side="left", padx=2)
+
         # Botones guardar/cancelar
         btns = ctk.CTkFrame(left, fg_color="transparent")
         btns.pack(padx=16, pady=12, fill="x")
@@ -412,12 +450,110 @@ class TemplateDesigner(ctk.CTkToplevel):
         font_row.pack(padx=12, fill="x", pady=(4, 6))
         ctk.CTkLabel(font_row, text="Fuente:", width=70,
                      font=ctk.CTkFont(size=11), text_color=C["text_gray"]).pack(side="left")
-        self.tp_font_var = ctk.StringVar(
-            value=slot_texto.get("font_family", "Arial"))
+        self.tp_font_var = ctk.StringVar(value=slot_texto.get("font_family", "Arial"))
         self.tp_font_var.trace_add("write", lambda *_: self._on_texto_panel_change())
-        ctk.CTkComboBox(font_row, variable=self.tp_font_var,
-                        values=FONT_FAMILIES, width=200,
-                        command=lambda _: self._on_texto_panel_change()).pack(side="left")
+
+        # Botón que muestra la fuente actual y abre el picker
+        self._font_btn = ctk.CTkButton(
+            font_row, text=slot_texto.get("font_family", "Arial"),
+            width=200, height=30, anchor="w",
+            font=ctk.CTkFont(size=12),
+            fg_color=C["bg_card"], hover_color=C["bg_hover"],
+            border_width=1, border_color=C["border"],
+            text_color=C["text"],
+            command=lambda: _abrir_font_picker())
+        self._font_btn.pack(side="left")
+
+        def _sync_font_btn(*_):
+            self._font_btn.configure(text=self.tp_font_var.get())
+
+        self.tp_font_var.trace_add("write", _sync_font_btn)
+
+        # Botón ↻ actualizar fuentes
+        def _refrescar_fuentes():
+            import modules.image_processor as ip
+            nuevas = ip._scan_system_fonts()
+            ip._SYSTEM_FONTS.clear()
+            ip._SYSTEM_FONTS.update(nuevas)
+            ip.FONT_FAMILIES[:] = sorted(nuevas.keys()) or ["Arial"]
+
+        ctk.CTkButton(font_row, text="↻", width=28, height=30,
+                      font=ctk.CTkFont(size=14),
+                      fg_color=C["bg_hover"], hover_color=C["primary"],
+                      command=_refrescar_fuentes).pack(side="left", padx=(4, 0))
+
+        def _abrir_font_picker():
+            import tkinter as _tk
+            import modules.image_processor as ip
+
+            popup = _tk.Toplevel(self)
+            popup.title("Elegir fuente")
+            popup.configure(bg="#1a1a2e")
+            popup.resizable(False, False)
+            # Posicionar debajo del botón
+            bx = self._font_btn.winfo_rootx()
+            by = self._font_btn.winfo_rooty() + self._font_btn.winfo_height()
+            popup.geometry(f"240x320+{bx}+{by}")
+            popup.grab_set()
+
+            # Buscador
+            search_var = _tk.StringVar()
+            search_entry = _tk.Entry(popup, textvariable=search_var,
+                                     bg="#2a2a3e", fg="white", insertbackground="white",
+                                     relief="flat", font=("Arial", 11))
+            search_entry.pack(fill="x", padx=6, pady=(6, 2), ipady=4)
+            search_entry.insert(0, "Buscar...")
+            search_entry.bind("<FocusIn>", lambda e: search_entry.delete(0, "end")
+                              if search_entry.get() == "Buscar..." else None)
+
+            # Listbox con scroll nativo
+            frame_lb = _tk.Frame(popup, bg="#1a1a2e")
+            frame_lb.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+            scrollbar = _tk.Scrollbar(frame_lb)
+            scrollbar.pack(side="right", fill="y")
+            listbox = _tk.Listbox(frame_lb, yscrollcommand=scrollbar.set,
+                                  bg="#2a2a3e", fg="white", selectbackground="#7c3aed",
+                                  font=("Arial", 11), relief="flat", activestyle="none",
+                                  highlightthickness=0, bd=0)
+            listbox.pack(side="left", fill="both", expand=True)
+            scrollbar.config(command=listbox.yview)
+            listbox.bind("<MouseWheel>",
+                         lambda e: listbox.yview_scroll(int(-e.delta / 120), "units"))
+
+            todas = ip.FONT_FAMILIES
+
+            def _poblar(lista):
+                listbox.delete(0, "end")
+                for f in lista:
+                    listbox.insert("end", f)
+                # Seleccionar la actual
+                actual = self.tp_font_var.get()
+                if actual in lista:
+                    idx = lista.index(actual)
+                    listbox.selection_set(idx)
+                    listbox.see(idx)
+
+            _poblar(todas)
+
+            def _filtrar(*_):
+                q = search_var.get().strip().lower()
+                if q and q != "buscar...":
+                    _poblar([f for f in todas if q in f.lower()])
+                else:
+                    _poblar(todas)
+
+            search_var.trace_add("write", _filtrar)
+
+            def _seleccionar(event=None):
+                sel = listbox.curselection()
+                if sel:
+                    self.tp_font_var.set(listbox.get(sel[0]))
+                popup.destroy()
+
+            listbox.bind("<Double-Button-1>", _seleccionar)
+            listbox.bind("<Return>", _seleccionar)
+            search_entry.bind("<Return>", _seleccionar)
+            search_entry.focus_set()
 
         # Tamaño principal
         sz_row = ctk.CTkFrame(inner, fg_color="transparent")
@@ -617,6 +753,13 @@ class TemplateDesigner(ctk.CTkToplevel):
             slot_texto["h"] = self.tp_h_var.get()
         self.after(80, self._refresh_preview)
 
+    def _centrar_slots(self, tipo: str):
+        W = self._config.get("ancho", 600)
+        for s in self._config.get("slots", []):
+            if tipo == "todo" or s.get("type") == tipo:
+                s["x"] = (W - s["w"]) // 2
+        self._refresh_preview()
+
     def _mover_slot(self, idx: int, delta: int):
         foto_slots = [s for s in self._config["slots"] if s.get("type") == "foto"]
         j = idx + delta
@@ -673,7 +816,8 @@ class TemplateDesigner(ctk.CTkToplevel):
     def _refresh_all(self):
         self._build_texto_panel()
         self._build_orden_ui()
-        self._refresh_preview()
+        # Usar zoom_fit al primer render para que la plantilla llene el panel
+        self.after(50, self._zoom_fit)
 
     # ── Zoom ───────────────────────────────────────────────────────────────────
 
@@ -688,7 +832,16 @@ class TemplateDesigner(ctk.CTkToplevel):
             self._refresh_preview()
 
     def _zoom_fit(self):
-        self._zoom_idx = 2   # volver a escala por defecto 0.18
+        cw = self.prev_canvas.winfo_width()
+        ch = self.prev_canvas.winfo_height()
+        if cw > 20 and ch > 20:
+            target = min(cw / self._config["ancho"], ch / self._config["alto"]) * 0.92
+            self._zoom_idx = min(
+                range(len(self._ZOOM_STEPS)),
+                key=lambda i: abs(self._ZOOM_STEPS[i] - target)
+            )
+        else:
+            self._zoom_idx = 2
         self._refresh_preview()
 
     def _on_mousewheel(self, event):
@@ -711,9 +864,12 @@ class TemplateDesigner(ctk.CTkToplevel):
 
         self._preview_photo = ImageTk.PhotoImage(img)
         self.prev_canvas.delete("all")
-        self.prev_canvas.create_image(pw // 2, ph // 2, anchor="center",
-                                       image=self._preview_photo)
-        self.prev_canvas.configure(scrollregion=(0, 0, pw, ph))
+        # Centrar imagen — usar el mayor entre el tamaño del canvas y el de la imagen
+        cw = max(self.prev_canvas.winfo_width(), pw)
+        ch = max(self.prev_canvas.winfo_height(), ph)
+        cx, cy = max(pw // 2, cw // 2), max(ph // 2, ch // 2)
+        self.prev_canvas.create_image(cx, cy, anchor="center", image=self._preview_photo)
+        self.prev_canvas.configure(scrollregion=(0, 0, max(pw, cw), max(ph, ch)))
 
         pct = int(scale * 100)
         self.lbl_zoom.configure(text=f"{pct}%")
