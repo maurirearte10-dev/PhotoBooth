@@ -42,9 +42,10 @@ class PrinterManager:
         try:
             import subprocess
             r = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
                  "Get-Printer | Select-Object -ExpandProperty Name"],
-                capture_output=True, text=True, timeout=8
+                capture_output=True, text=True, timeout=8,
+                creationflags=0x08000000  # CREATE_NO_WINDOW
             )
             if r.returncode == 0:
                 nombres = [n.strip() for n in r.stdout.splitlines() if n.strip()]
@@ -57,7 +58,8 @@ class PrinterManager:
             import subprocess
             r = subprocess.run(
                 ["wmic", "printer", "get", "name", "/format:list"],
-                capture_output=True, text=True, timeout=8
+                capture_output=True, text=True, timeout=8,
+                creationflags=0x08000000  # CREATE_NO_WINDOW
             )
             nombres = []
             for line in r.stdout.splitlines():
@@ -202,20 +204,22 @@ class PrinterManager:
             ph_u = int(ph_mm / 25.4 * 100)
 
             if escala == "exacto" and target_w_mm > 0 and target_h_mm > 0:
-                # Tamaño físico exacto de la imagen, centrado en la hoja
+                # Tamaño físico exacto de la imagen, centrado en el papel físico (PageBounds)
+                # Usar PageBounds en vez de MarginBounds evita el descentrado causado por
+                # márgenes asimétricos del driver (ej: Kodak 305 tiene márgenes distintos por lado)
                 draw_block = f"""
     $e.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
     $pu_w  = [int]({target_w_mm} / 25.4 * 100)
     $pu_h  = [int]({target_h_mm} / 25.4 * 100)
-    $rect  = $e.MarginBounds
+    $rect  = $e.PageBounds
     $x     = [int]($rect.Left + ($rect.Width  - $pu_w) / 2)
     $y     = [int]($rect.Top  + ($rect.Height - $pu_h) / 2)
     $e.Graphics.DrawImage($bmp, $x, $y, $pu_w, $pu_h)"""
             else:
-                # Llenar hoja: escalar para ocupar toda el área imprimible
+                # Llenar hoja: escalar para ocupar todo el papel físico (PageBounds)
                 draw_block = """
     $e.Graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-    $rect  = $e.MarginBounds
+    $rect  = $e.PageBounds
     $ratio = [Math]::Min([double]$rect.Width / $bmp.Width, [double]$rect.Height / $bmp.Height)
     $w = [int]($bmp.Width  * $ratio)
     $h = [int]($bmp.Height * $ratio)
@@ -245,7 +249,8 @@ $bmp.Dispose()
             try:
                 r = subprocess.run(
                     ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                    timeout=60, capture_output=True, text=True, env=ps_env
+                    timeout=60, capture_output=True, text=True, env=ps_env,
+                    creationflags=0x08000000  # CREATE_NO_WINDOW
                 )
             except subprocess.TimeoutExpired:
                 print("[PrinterManager] PowerShell tardó más de 60s — trabajo cancelado")
