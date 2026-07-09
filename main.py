@@ -373,37 +373,98 @@ class ActivacionScreen(tk.Canvas):
                      text_color=C["text_muted"]).pack(pady=(4, 0))
 
         ctk.CTkFrame(card, fg_color="#2a1a4a", height=1,
-                     corner_radius=0).pack(fill="x", padx=32, pady=(16, 20))
+                     corner_radius=0).pack(fill="x", padx=32, pady=(16, 12))
 
-        ctk.CTkLabel(card,
-                     text="Ingresá tu clave de licencia para activar PhotoBooth.",
+        # ── Pestañas ──────────────────────────────────────────────────────────
+        self._tab = ctk.StringVar(value="codigo")
+        tab_row = ctk.CTkFrame(card, fg_color="transparent")
+        tab_row.pack(padx=32, fill="x", pady=(0, 12))
+
+        def _set_tab(t):
+            self._tab.set(t)
+            self.error_var.set("")
+            frm_codigo.pack_forget()
+            frm_login.pack_forget()
+            if t == "codigo":
+                frm_codigo.pack(padx=32, fill="x")
+                btn_tab_codigo.configure(fg_color=C["primary"], text_color="#fff")
+                btn_tab_login.configure(fg_color="transparent", text_color=C["text_gray"])
+            else:
+                frm_login.pack(padx=32, fill="x")
+                btn_tab_codigo.configure(fg_color="transparent", text_color=C["text_gray"])
+                btn_tab_login.configure(fg_color=C["primary"], text_color="#fff")
+
+        btn_tab_codigo = ctk.CTkButton(tab_row, text="Código de licencia", height=32,
+                                       fg_color=C["primary"], text_color="#fff",
+                                       font=ctk.CTkFont(size=12),
+                                       corner_radius=8,
+                                       command=lambda: _set_tab("codigo"))
+        btn_tab_codigo.pack(side="left", expand=True, fill="x", padx=(0, 4))
+
+        btn_tab_login = ctk.CTkButton(tab_row, text="Iniciar sesión", height=32,
+                                      fg_color="transparent", text_color=C["text_gray"],
+                                      border_width=1, border_color=C["primary"],
+                                      font=ctk.CTkFont(size=12),
+                                      corner_radius=8,
+                                      command=lambda: _set_tab("login"))
+        btn_tab_login.pack(side="left", expand=True, fill="x")
+
+        # ── Panel código ──────────────────────────────────────────────────────
+        frm_codigo = ctk.CTkFrame(card, fg_color="transparent")
+        ctk.CTkLabel(frm_codigo,
+                     text="Ingresá tu clave de licencia.",
                      font=ctk.CTkFont(size=12),
                      text_color=C["text_gray"],
-                     wraplength=300).pack(padx=32)
-
-        ctk.CTkEntry(card, textvariable=self.key_var,
+                     wraplength=300).pack()
+        ctk.CTkEntry(frm_codigo, textvariable=self.key_var,
                      placeholder_text="PB-XXXX-XXXX-XXXX-XXXX",
                      width=300, height=42,
-                     font=ctk.CTkFont(size=13)).pack(pady=(14, 6), padx=32)
+                     font=ctk.CTkFont(size=13)).pack(pady=(10, 4))
+        self.btn_activar = ctk.CTkButton(
+            frm_codigo, text="Activar licencia", width=300, height=42,
+            fg_color=C["primary"], text_color="#ffffff",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._activar)
+        self.btn_activar.pack(pady=(4, 12))
+        frm_codigo.pack(padx=32, fill="x")
 
+        # ── Panel login ───────────────────────────────────────────────────────
+        frm_login = ctk.CTkFrame(card, fg_color="transparent")
+        ctk.CTkLabel(frm_login,
+                     text="Iniciá sesión con tu cuenta de pampaguazu.com.ar\ny recuperamos tu licencia automáticamente.",
+                     font=ctk.CTkFont(size=12),
+                     text_color=C["text_gray"],
+                     wraplength=300).pack()
+        self.email_var = ctk.StringVar()
+        self.pass_var  = ctk.StringVar()
+        ctk.CTkEntry(frm_login, textvariable=self.email_var,
+                     placeholder_text="Email",
+                     width=300, height=40,
+                     font=ctk.CTkFont(size=13)).pack(pady=(10, 4))
+        ctk.CTkEntry(frm_login, textvariable=self.pass_var,
+                     placeholder_text="Contraseña",
+                     show="*",
+                     width=300, height=40,
+                     font=ctk.CTkFont(size=13)).pack(pady=(0, 4))
+        self.btn_login = ctk.CTkButton(
+            frm_login, text="Iniciar sesión", width=300, height=42,
+            fg_color=C["primary"], text_color="#ffffff",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._login_con_cuenta)
+        self.btn_login.pack(pady=(4, 12))
+
+        # ── Error y link ──────────────────────────────────────────────────────
         ctk.CTkLabel(card, textvariable=self.error_var,
                      text_color=C["danger"],
                      font=ctk.CTkFont(size=11),
                      wraplength=300).pack()
-
-        self.btn_activar = ctk.CTkButton(
-            card, text="Activar licencia", width=300, height=42,
-            fg_color=C["primary"], text_color="#ffffff",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            command=self._activar)
-        self.btn_activar.pack(pady=(10, 6), padx=32)
 
         ctk.CTkButton(card, text="¿No tenés licencia? Adquirila en pampaguazu.com.ar →",
                       fg_color="transparent", text_color=C["primary"],
                       hover_color="#1a0a30", font=ctk.CTkFont(size=11),
                       width=300, height=28,
                       command=lambda: __import__("webbrowser").open("https://pampaguazu.com.ar/photobooth#precios")
-                      ).pack(pady=(0, 24))
+                      ).pack(pady=(4, 24))
 
         # Label de estado auto-retry (solo visible en hardware_mismatch)
         self.lbl_retry = ctk.CTkLabel(card, text="",
@@ -454,6 +515,45 @@ class ActivacionScreen(tk.Canvas):
             msg = msg or "Esta licencia está activa en otro equipo. El soporte puede liberarla desde el panel."
 
         self.after(0, lambda m=msg, hw=is_hw_mismatch: self._mostrar_error(m, hw))
+
+    def _login_con_cuenta(self):
+        email = self.email_var.get().strip()
+        password = self.pass_var.get().strip()
+        if not email or not password:
+            self.error_var.set("Ingresá email y contraseña.")
+            return
+        self.btn_login.configure(state="disabled", text="Verificando...")
+        self.error_var.set("")
+        threading.Thread(target=self._do_login, args=(email, password), daemon=True).start()
+
+    def _do_login(self, email: str, password: str):
+        res = self.pampa.login(email, password)
+        if not self.winfo_exists():
+            return
+        if not res or not res.get("success"):
+            err = res.get("error", "No se pudo iniciar sesión.") if res else "Sin conexión."
+            self.after(0, lambda: (self.error_var.set(err),
+                                   self.btn_login.configure(state="normal", text="Iniciar sesión")))
+            return
+        # Buscar licencia de PhotoBooth
+        licencias = res.get("licencias") or []
+        lic_pb = next((l for l in licencias
+                       if "PHOTO" in (l.get("programa") or "").upper()
+                       or "PB-" in (l.get("license_key") or "")), None)
+        if not lic_pb:
+            self.after(0, lambda: (self.error_var.set("No encontramos una licencia de PhotoBooth en tu cuenta."),
+                                   self.btn_login.configure(state="normal", text="Iniciar sesión")))
+            return
+        key = lic_pb["license_key"]
+        # Activar con esa clave
+        res2 = self.pampa.validate_license(key, explicit_activation=True)
+        if res2 and res2.get("valid"):
+            self.db.set_config("license_key", key)
+            self.after(0, self.on_activado)
+        else:
+            msg = res2.get("message", "No se pudo activar la licencia.") if res2 else "Sin conexión."
+            self.after(0, lambda m=msg: (self.error_var.set(m),
+                                         self.btn_login.configure(state="normal", text="Iniciar sesión")))
 
     def _mostrar_error(self, msg: str, start_retry: bool = False):
         self.error_var.set(msg)
