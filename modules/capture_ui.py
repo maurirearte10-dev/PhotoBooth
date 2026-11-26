@@ -839,13 +839,13 @@ class CaptureUI(tk.Toplevel):
             frm = tk.Frame(self.frm_seleccion,
                            bg=C["bg_card"],
                            width=tw, height=th,
-                           highlightthickness=3,
+                           highlightthickness=6,
                            highlightbackground=C["border"])
             frm.place(x=x, y=y)
             frm.pack_propagate(False)
 
             lbl = tk.Label(frm, image=photo, bg=C["bg_card"],
-                           width=tw - 6, height=th - 6)
+                           width=tw - 12, height=th - 12)
             lbl.place(relx=0.5, rely=0.5, anchor="center")
 
             badge = tk.Label(frm, text=f"  Foto {i + 1}  ",
@@ -854,21 +854,36 @@ class CaptureUI(tk.Toplevel):
                              padx=4, pady=2)
             badge.place(x=8, y=8)
 
-            frm.bind("<Button-1>", lambda e, idx=i, f=frm: self._toggle_foto(idx, f))
-            lbl.bind("<Button-1>", lambda e, idx=i, f=frm: self._toggle_foto(idx, f))
-            self._btns_foto.append(frm)
+            # Checkmark de selección (visible solo al elegir)
+            check = tk.Label(frm, text="✓",
+                             font=("Helvetica", 28, "bold"),
+                             fg="#ffffff", bg="#10b981",
+                             width=2, padx=4, pady=2)
+            check.place(relx=1.0, rely=0.0, anchor="ne", x=-8, y=8)
+            check.place_forget()
+
+            par = (frm, check)
+            frm.bind("<Button-1>", lambda e, idx=i, p=par: self._toggle_foto(idx, p))
+            lbl.bind("<Button-1>", lambda e, idx=i, p=par: self._toggle_foto(idx, p))
+            badge.bind("<Button-1>", lambda e, idx=i, p=par: self._toggle_foto(idx, p))
+            self._btns_foto.append(par)
 
         self.btn_confirmar_sel.configure(state="disabled")
 
     def _toggle_foto(self, idx: int, frm):
+        frm_widget, check = frm if isinstance(frm, tuple) else (frm, None)
         if idx in self._indices_elegidos:
             self._indices_elegidos.discard(idx)
-            frm.config(highlightbackground=C["border"])
+            frm_widget.config(highlightbackground=C["border"])
+            if check:
+                check.place_forget()
         else:
             if len(self._indices_elegidos) >= self._n_elegir:
                 return
             self._indices_elegidos.add(idx)
-            frm.config(highlightbackground=C["primary"])
+            frm_widget.config(highlightbackground="#10b981")
+            if check:
+                check.place(relx=1.0, rely=0.0, anchor="ne", x=-8, y=8)
 
         n_elegidas = len(self._indices_elegidos)
         if n_elegidas == self._n_elegir:

@@ -70,13 +70,39 @@ class PhotoBoothApp(ctk.CTk):
         threading.Thread(target=self._check_lic_bg, daemon=True).start()
 
     def _check_lic_bg(self):
+        import time as _time
         license_key = self.db.get_config("license_key", "")
         if not license_key:
             self.after(0, self.mostrar_activacion)
             return
 
+        # Gracia offline: si la última validación exitosa fue hace menos de 7 días,
+        # intentamos online pero si falla, dejamos entrar igual.
+        OFFLINE_GRACE_DAYS = 7
         resultado = self.pampa.validate_license(license_key)
         logging.info("Startup validate result: %s", resultado)
+
+        if resultado and resultado.get("valid"):
+            # Guardar timestamp de validación exitosa en la BD local
+            self.db.set_config("last_valid_at", _time.strftime("%Y-%m-%dT%H:%M:%S"))
+        elif resultado and resultado.get("status") in ("sin_conexion", "error"):
+            # Sin internet — verificar gracia local en BD
+            last_valid = self.db.get_config("last_valid_at", "")
+            if last_valid:
+                try:
+                    from datetime import datetime
+                    hours = (datetime.now() - datetime.fromisoformat(last_valid)).total_seconds() / 3600
+                    if hours <= OFFLINE_GRACE_DAYS * 24:
+                        days_left = round((OFFLINE_GRACE_DAYS * 24 - hours) / 24, 1)
+                        logging.info("Offline grace activa: %.1fh transcurridas, %.1f días restantes", hours, days_left)
+                        resultado = {
+                            "valid": True,
+                            "status": "offline_grace",
+                            "message": f"Sin conexión. Modo offline activo ({days_left} días restantes).",
+                        }
+                except Exception as e:
+                    logging.warning("Error leyendo last_valid_at: %s", e)
+
         self.after(0, self._on_lic_result, resultado)
 
     def _on_lic_result(self, resultado):
@@ -86,6 +112,9 @@ class PhotoBoothApp(ctk.CTk):
         if resultado and resultado.get("valid"):
             if resultado.get("expires_at"):
                 self.db.set_config("license_expires_at", resultado["expires_at"])
+            if status != "offline_grace":
+                import time as _time
+                self.db.set_config("last_valid_at", _time.strftime("%Y-%m-%dT%H:%M:%S"))
             self.mostrar_login()
             self._iniciar_revalidacion_periodica()
         elif status == "sin_conexion":
@@ -163,6 +192,7 @@ class PhotoBoothApp(ctk.CTk):
     def mostrar_activacion(self, error: str = ""):
         self._set_frame(ActivacionScreen(self, self.db, self.pampa,
                                          on_activado=self.mostrar_login,
+                                         on_activado_con_usuario=self._on_login_ok,
                                          error_inicial=error))
 
     def mostrar_login(self):
@@ -336,11 +366,13 @@ class ActivacionScreen(tk.Canvas):
     """Pantalla de activación de licencia. Se muestra cuando no hay licencia válida."""
 
     def __init__(self, master, db: DatabaseManager, pampa, on_activado,
+                 on_activado_con_usuario=None,
                  error_inicial: str = ""):
         super().__init__(master, bd=0, highlightthickness=0, bg="#1c0439")
         self.db       = db
         self.pampa    = pampa
         self.on_activado = on_activado
+        self.on_activado_con_usuario = on_activado_con_usuario
         self._bg_ref  = None
         self._bg_id   = None
         self._card_id = None
@@ -477,6 +509,7 @@ class ActivacionScreen(tk.Canvas):
         self.bind("<Configure>", self._on_canvas_resize)
         self.bind("<Destroy>", lambda _: self._cancel_retry())
         self.winfo_toplevel().bind("<Configure>", self._on_tl_resize, add="+")
+        self.winfo_toplevel().bind("<Map>", lambda _: self.after(50, lambda: self._render_bg() if self.winfo_exists() else None), add="+")
         self.after(150, self._render_bg)
         master.bind("<Return>", lambda _: self._activar())
 
@@ -549,7 +582,17 @@ class ActivacionScreen(tk.Canvas):
         res2 = self.pampa.validate_license(key, explicit_activation=True)
         if res2 and res2.get("valid"):
             self.db.set_config("license_key", key)
-            self.after(0, self.on_activado)
+            if self.on_activado_con_usuario:
+                # Auto-login: crear/obtener usuario local desde cuenta PAMPA
+                pampa_user = {
+                    "email": email,
+                    "nombre": res.get("nombre") or email.split("@")[0],
+                    "rol": "super_admin",
+                }
+                usuario = self.db.upsert_usuario_pampa(pampa_user)
+                self.after(0, lambda u=usuario: self.on_activado_con_usuario(u))
+            else:
+                self.after(0, self.on_activado)
         else:
             msg = res2.get("message", "No se pudo activar la licencia.") if res2 else "Sin conexión."
             self.after(0, lambda m=msg: (self.error_var.set(m),
@@ -736,6 +779,7 @@ class LoginScreen(tk.Canvas):
         # Fondo y resize
         self.bind("<Configure>", self._on_canvas_resize)
         self.winfo_toplevel().bind("<Configure>", self._on_tl_resize, add="+")
+        self.winfo_toplevel().bind("<Map>", lambda _: self.after(50, lambda: self._render_bg() if self.winfo_exists() else None), add="+")
         self.after(150, self._render_bg)
 
         master.bind("<Return>", lambda _: self._login())
