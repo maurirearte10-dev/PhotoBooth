@@ -225,7 +225,16 @@ class PrintQueue:
         except OSError as _e:
             print(f"[PrintQueue] No se pudo crear directorio {evento_dir}: {_e}")
             return False
-        ruta_out = os.path.join(evento_dir, f"pareja_{int(time.time())}.jpg")
+        # Nombre único con las dos tiras: pareja_sesion_3_tira__sesion_4_tira.jpg
+        # (antes era pareja_<segundos>.jpg y dos pares en el mismo segundo se pisaban)
+        n1 = os.path.splitext(os.path.basename(ruta1))[0]
+        n2 = os.path.splitext(os.path.basename(ruta2))[0]
+        base = f"pareja_{n1}__{n2}"
+        ruta_out = os.path.join(evento_dir, base + ".jpg")
+        v = 2
+        while os.path.exists(ruta_out):
+            ruta_out = os.path.join(evento_dir, f"{base}_v{v}.jpg")
+            v += 1
         try:
             if fmt.get("print_2up"):
                 pw, ph = fmt["print_w"], fmt["print_h"]
